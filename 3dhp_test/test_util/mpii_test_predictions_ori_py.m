@@ -25,8 +25,8 @@ net_path = {};
 % net = caffe.Net(fullfile(net_base, net_path{n,1}, 'deploy_net.prototxt'), fullfile(snapshot_base, net_path{n,1}, sprintf('snapshot_iter_%d.caffemodel', net_path{n,2})), 'test');
 % fprintf('Doing %s \n', net_path{n,1});
 %%
-% aggregation_mode: J_Best P_Best J_Agg P_Agg
-aggregation_mode='J_Agg';
+%
+aggregation_mode='J_Best';
 load(['..\..\checkpoint\inference_data_' aggregation_mode '.mat']) %Change to wherever you put the predicted 3D poses.
 t_size = size(TS1);
 for tt = 1:t_size(4)
