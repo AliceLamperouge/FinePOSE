@@ -169,6 +169,21 @@ def parse_args():
     parser.add_argument('--p2', action='store_true',
                         default=False, help='using protocol #2, i.e., P-MPJPE')
 
+    # DPoser-X fusion: occlusion-aware masked training and pose-completion sampling.
+    # All flags default to OFF to preserve legacy behavior and checkpoint compatibility.
+    parser.add_argument('--occlusion-aware', dest='occlusion_aware', action='store_true',
+                        default=False,
+                        help='enable DPoser-X style joint-level masked training; '
+                             'adds an observation-mask channel to the spatial embedding')
+    parser.add_argument('--occlusion-ratio', dest='occlusion_ratio',
+                        default=0.3, type=float,
+                        help='probability that each joint is marked as unobserved '
+                             'during masked training (DPoser-X)')
+    parser.add_argument('--completion-jitter-steps', dest='completion_jitter_steps',
+                        default=250, type=int,
+                        help='truncated timestep T used to initialize noise for '
+                             'pose-completion DDIM sampling (DPoser-X style)')
+
     parser.set_defaults(bone_length_term=True)
     parser.set_defaults(data_augmentation=True)
     parser.set_defaults(test_time_augmentation=True)

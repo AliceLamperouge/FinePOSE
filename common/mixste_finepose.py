@@ -228,7 +228,8 @@ class TemporalCrossAttention(nn.Module):
 class  MixSTE2(nn.Module):
     def __init__(self, num_frame=9, num_joints=17, in_chans=2, embed_dim_ratio=32, depth=4,
                  num_heads=8, mlp_ratio=2., qkv_bias=True, qk_scale=None,
-                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.2,  norm_layer=None, is_train=True):
+                 drop_rate=0., attn_drop_rate=0., drop_path_rate=0.2,  norm_layer=None, is_train=True,
+                 occlusion_aware=False):
         """    ##########hybrid_backbone=None, representation_size=None,
         Args:
             num_frame (int, tuple): input frame number
@@ -244,6 +245,8 @@ class  MixSTE2(nn.Module):
             attn_drop_rate (float): attention dropout rate
             drop_path_rate (float): stochastic depth rate
             norm_layer: (nn.Module): normalization layer
+            occlusion_aware (bool): if True, append a per-joint observation-mask
+                channel to the spatial embedding input (DPoser-X fusion).
         """
         super().__init__()
 
@@ -251,9 +254,13 @@ class  MixSTE2(nn.Module):
         embed_dim = embed_dim_ratio
         out_dim = 3
         self.is_train=is_train
+        self.occlusion_aware = occlusion_aware
 
         ### spatial patch embedding
-        self.Spatial_patch_to_embedding = nn.Linear(in_chans + 3, embed_dim_ratio)
+        # DPoser-X fusion: when occlusion_aware is enabled, an extra channel carries
+        # the per-joint observation flag (1 = 3D observed, 0 = to be completed).
+        spatial_in_chans = in_chans + 3 + (1 if occlusion_aware else 0)
+        self.Spatial_patch_to_embedding = nn.Linear(spatial_in_chans, embed_dim_ratio)
 
         self.Spatial_pos_embed = nn.Parameter(torch.zeros(1, num_joints, embed_dim_ratio))
 
@@ -351,11 +358,16 @@ class  MixSTE2(nn.Module):
 
 
 
-    def STE_forward(self, x_2d, x_3d, t, xf_proj):
+    def STE_forward(self, x_2d, x_3d, t, xf_proj, joint_mask=None):
 
         if self.is_train:
             x = torch.cat((x_2d, x_3d), dim=-1)
             b, f, n, c = x.shape
+            # DPoser-X fusion: append per-joint observation-mask channel.
+            if self.occlusion_aware:
+                if joint_mask is None:
+                    joint_mask = torch.ones(b, f, n, 1, device=x.device, dtype=x.dtype)
+                x = torch.cat((x, joint_mask), dim=-1)
             x = rearrange(x, 'b f n c  -> (b f) n c', )
             x = self.Spatial_patch_to_embedding(x)
             x += self.Spatial_pos_embed
@@ -369,6 +381,14 @@ class  MixSTE2(nn.Module):
             x_2d = x_2d[:,None].repeat(1,x_3d.shape[1],1,1,1)
             x = torch.cat((x_2d, x_3d), dim=-1)
             b, h, f, n, c = x.shape
+            # DPoser-X fusion: append per-joint observation-mask channel at inference.
+            if self.occlusion_aware:
+                if joint_mask is None:
+                    joint_mask = torch.ones(b, h, f, n, 1, device=x.device, dtype=x.dtype)
+                elif joint_mask.dim() == 4:
+                    # (b, f, n, 1) -> broadcast across the proposal axis
+                    joint_mask = joint_mask.unsqueeze(1).expand(b, h, f, n, 1)
+                x = torch.cat((x, joint_mask), dim=-1)
             x = rearrange(x, 'b h f n c  -> (b h f) n c', )
             x = self.Spatial_patch_to_embedding(x)
             x += self.Spatial_pos_embed
@@ -473,7 +493,7 @@ class  MixSTE2(nn.Module):
         xf_out = xf_out.permute(1, 0, 2)
         return xf_proj, xf_out
 
-    def forward(self, x_2d, x_3d, t, text, pre_text_tensor):
+    def forward(self, x_2d, x_3d, t, text, pre_text_tensor, joint_mask=None):
         if self.is_train:
             b, f, n, c = x_2d.shape
         else:
@@ -481,7 +501,7 @@ class  MixSTE2(nn.Module):
         
         xf_proj, xf_out = self.encode_text(text, pre_text_tensor)
 
-        x, time_embed = self.STE_forward(x_2d, x_3d, t, xf_proj)
+        x, time_embed = self.STE_forward(x_2d, x_3d, t, xf_proj, joint_mask=joint_mask)
 
         x = self.temporal_cross_attn(x, xf_out, time_embed)
 
